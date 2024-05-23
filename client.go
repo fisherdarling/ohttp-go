@@ -180,9 +180,9 @@ func encodeNonce(nonce []byte, counter uint64) []byte {
 	buffer := make([]byte, len(nonce))
 	binary.BigEndian.PutUint64(buffer[len(nonce)-8:], counter)
 	for i, _ := range buffer {
-		nonce[i] ^= buffer[i]
+		buffer[i] ^= nonce[i]
 	}
-	return nonce
+	return buffer
 }
 
 func decapsulateResponseChunk(suite hpke.Suite, aeadKey, aeadNonce []byte, responseCounter uint64, aad []byte, ct []byte) ([]byte, error) {
