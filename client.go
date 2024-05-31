@@ -1,9 +1,11 @@
 package ohttp
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"io"
 
 	"github.com/cloudflare/circl/hpke"
 	"github.com/cloudflare/circl/kem"
@@ -109,6 +111,81 @@ func (c Client) EncapsulateRequest(request []byte) (EncapsulatedRequest, Encapsu
 			suite:         c.context.Suite(),
 			context:       c.context,
 		}, nil
+}
+
+func (c EncapsulatedRequestContext) DecapsulateChunkedResponse(body io.Reader, writer io.Writer) error {
+	_, _, AEAD := c.suite.Params()
+
+	// Nonce is Nk
+	responseNonceLen := max(int(AEAD.KeySize()), 12)
+	responseNonce := make([]byte, responseNonceLen)
+	n, err := io.ReadFull(body, responseNonce)
+
+	if n != responseNonceLen || err != nil {
+		return fmt.Errorf("unable to read response nonce: %s", err)
+	}
+
+	rc, err := c.Prepare(EncapsulatedResponseHeader{responseNonce: responseNonce})
+	if err != nil {
+		return fmt.Errorf("unable to create response decapsulation context: %s", err)
+	}
+
+	// Chunked Response Chunks {
+	//   Non-Final Response Chunk (..),
+	//   Final Response Chunk Indicator (i) = 0,
+	//   AEAD-Protected Final Response Chunk (..),
+	// }
+	//
+	// Non-Final Response Chunk {
+	//   Length (i) = 1..,
+	//   AEAD-Protected Chunk (..),
+	// }
+	reader := bufio.NewReader(body)
+	for {
+		len, err := Read(reader)
+		if err != nil {
+			return fmt.Errorf("unable to read chunk length: %s", err)
+		}
+
+		// We're at the final chunk:
+		if len == 0 {
+			encappedChunk, err := io.ReadAll(reader)
+			if err != nil {
+				return fmt.Errorf("unable to read final chunk: %s", err)
+			}
+
+			chunk, err := rc.DecapsulateFinalResponseChunk(EncapsulatedResponseChunk{raw: encappedChunk})
+			if err != nil {
+				return fmt.Errorf("unable to read chunk length: %s", err)
+			}
+
+			n, err = writer.Write(chunk)
+			if err != nil {
+				return fmt.Errorf("error writing decapsulated chunk: %s, only wrote %d bytes", err, n)
+			}
+
+			break
+		} else {
+			// We have a normal, length-delimited chunk
+			encappedChunk := make([]byte, len)
+			n, err := io.ReadFull(reader, encappedChunk)
+			if n != int(len) || err != nil {
+				return fmt.Errorf("unable to read chunk: %s, len=%d", err, n)
+			}
+
+			chunk, err := rc.DecapsulateResponseChunk(EncapsulatedResponseChunk{raw: encappedChunk})
+			if err != nil {
+				return fmt.Errorf("unable to read chunk length: %s", err)
+			}
+
+			n, err = writer.Write(chunk)
+			if err != nil {
+				return fmt.Errorf("error writing decapsulated chunk: %s, only wrote %d bytes", err, n)
+			}
+		}
+	}
+
+	return nil
 }
 
 func (c *ChunkedClient) Prepare() (EncapsulatedRequestHeader, EncapsulatedRequestContext, error) {
