@@ -131,13 +131,13 @@ func (c *EncapsulatedRequestContext) EncapsulateRequestChunk(requestChunk []byte
 	}, nil
 }
 
-func (c *EncapsulatedRequestContext) EncapsulateFinalRequestChunk(requestChunk []byte) (EncapsulatedRequestChunk, error) {
+func (c *EncapsulatedRequestContext) EncapsulateFinalRequestChunk(requestChunk []byte) (EncapsulatedFinalRequestChunk, error) {
 	ct, err := c.context.Seal(requestChunk, []byte("final"))
 	if err != nil {
-		return EncapsulatedRequestChunk{}, err
+		return EncapsulatedFinalRequestChunk{}, err
 	}
 
-	return EncapsulatedRequestChunk{
+	return EncapsulatedFinalRequestChunk{
 		ct: ct,
 	}, nil
 }
